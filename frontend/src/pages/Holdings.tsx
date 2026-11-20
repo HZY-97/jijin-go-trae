@@ -121,11 +121,11 @@ export function Holdings() {
                       </td>
                       <td className="num px-3 py-3 text-right">
                         {h.nav.toFixed(4)}
-                        {h.estimateChange !== null && (
+                        {h.dayChangePct !== undefined && (
                           <div className="text-[11px]">
                             <ChangeText
-                              value={h.estimateChange}
-                              text={pct(h.estimateChange)}
+                              value={h.dayChangePct}
+                              text={pct(h.dayChangePct)}
                             />
                           </div>
                         )}
@@ -207,11 +207,11 @@ export function Holdings() {
                   <Cell label="成本价" value={h.costPrice.toFixed(4)} />
                   <Cell label="净值" value={h.nav.toFixed(4)} />
                   <Cell
-                    label="估值"
+                    label="日涨跌"
                     value={
-                      h.estimateChange !== null ? pct(h.estimateChange) : '—'
+                      h.dayChangePct !== undefined ? pct(h.dayChangePct) : '—'
                     }
-                    tone={h.estimateChange ?? 0}
+                    tone={h.dayChangePct ?? 0}
                   />
                   <Cell
                     label="隐性成本"

@@ -1,11 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Chart, axisStyle } from '../components/Chart'
 import { Badge, Button, Card, ChangeText, StatTile } from '../components/ui'
 import { IconAlert, IconArrowLeft, IconClock, IconSwap } from '../components/icons'
-import { mockNavSeries } from '../data/mock'
 import { money, pct, shortDate } from '../lib/format'
 import { useFundDetail } from '../lib/store'
+import * as api from '../lib/api'
+import type { NavPoint } from '../types'
 import { FundFormModal } from './FundForm'
 
 type Range = '30' | '90' | '180' | 'all'
@@ -15,11 +16,36 @@ export function FundDetail() {
   const { holding, fundTrades, fundPairs } = useFundDetail(code)
   const [range, setRange] = useState<Range>('180')
   const [editOpen, setEditOpen] = useState(false)
+  const [series, setSeries] = useState<NavPoint[]>([])
+  const [navLoading, setNavLoading] = useState(false)
+  const [navError, setNavError] = useState<string | null>(null)
 
-  const series = useMemo(() => mockNavSeries(code), [code])
+  // 真实净值曲线：来自天天基金历史净值
+  useEffect(() => {
+    if (!code) return
+    let cancelled = false
+    setNavLoading(true)
+    setNavError(null)
+    api
+      .getNavHistory(code, range)
+      .then((res) => {
+        if (!cancelled) setSeries(res.points)
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        setSeries([])
+        setNavError(err instanceof Error ? err.message : '净值历史获取失败')
+      })
+      .finally(() => {
+        if (!cancelled) setNavLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [code, range])
 
   const navOption = useMemo(() => {
-    const data = range === 'all' ? series : series.slice(-Number(range))
+    const data = series
     return (dark: 'light' | 'dark') => ({
       grid: { left: 48, right: 14, top: 16, bottom: 24 },
       tooltip: { trigger: 'axis' },
@@ -122,19 +148,21 @@ export function FundDetail() {
             sub={`${h.navDate}`}
           />
           <Metric
-            label="实时估值"
-            value={h.estimateNav ? h.estimateNav.toFixed(4) : '—'}
+            label="净值日涨跌"
+            value={
+              h.dayChangePct !== undefined ? pct(h.dayChangePct) : '—'
+            }
             sub={
-              h.estimateChange !== null ? (
+              h.estimateNav !== null ? (
                 <ChangeText
-                  value={h.estimateChange}
-                  text={pct(h.estimateChange)}
+                  value={h.estimateChange ?? 0}
+                  text={pct(h.estimateChange ?? 0)}
                 />
               ) : (
-                '非交易时段'
+                '已公布净值日涨跌幅'
               )
             }
-            tone={h.estimateChange ?? 0}
+            tone={h.dayChangePct ?? 0}
           />
           <Metric
             label="持仓成本价"
@@ -215,7 +243,21 @@ export function FundDetail() {
             </div>
           }
         >
-          <Chart option={navOption} height={280} />
+          {navError ? (
+            <p className="py-16 text-center text-xs text-warn">
+              净值历史获取失败：{navError}
+            </p>
+          ) : navLoading && series.length === 0 ? (
+            <p className="py-16 text-center text-xs text-text-muted">
+              正在加载净值曲线…
+            </p>
+          ) : series.length === 0 ? (
+            <p className="py-16 text-center text-xs text-text-muted">
+              暂无净值数据
+            </p>
+          ) : (
+            <Chart option={navOption} height={280} />
+          )}
           <div className="mt-3 flex flex-wrap items-center gap-4 text-[11px] text-text-muted">
             <span className="flex items-center gap-1.5">
               <span className="h-0.5 w-4 rounded bg-accent" />

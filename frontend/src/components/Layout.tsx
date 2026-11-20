@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useStore } from '../lib/store'
 import { useTheme } from '../lib/theme'
+import { ErrorBanner } from './ErrorBanner'
 import {
   IconChart,
   IconCoin,
@@ -29,11 +30,18 @@ const MOBILE_NAV = [
 ]
 
 export function Layout() {
-  const { market, summary } = useStore()
+  const { market, summary, holdings } = useStore()
   const { resolved, toggle } = useTheme()
   const location = useLocation()
 
   const isDetail = /^\/fund\//.test(location.pathname)
+
+  // 盘中实时估值拿不到时，退回展示「最新已公布净值」
+  const hasEstimate = holdings.some((h) => h.estimateNav !== null)
+  const latestNavDate = holdings.reduce(
+    (latest, h) => (h.navDate > latest ? h.navDate : latest),
+    '',
+  )
 
   return (
     <div className="min-h-dvh bg-canvas">
@@ -130,9 +138,24 @@ export function Layout() {
               </div>
             </div>
             <div className="ml-auto flex items-center gap-2">
-              <span className="hidden items-center gap-1.5 rounded-md bg-surface-2 px-2 py-1 text-[11px] text-text-secondary sm:inline-flex">
-                <span className="live-dot h-1.5 w-1.5 rounded-full bg-up" />
-                实时估值已开启
+              <span
+                title={
+                  hasEstimate
+                    ? '盘中实时估值可用'
+                    : '天天基金盘中估值接口已下线，仅能展示最近一个已公布净值'
+                }
+                className="hidden items-center gap-1.5 rounded-md bg-surface-2 px-2 py-1 text-[11px] text-text-secondary sm:inline-flex"
+              >
+                <span
+                  className={`live-dot h-1.5 w-1.5 rounded-full ${
+                    hasEstimate ? 'bg-up' : 'bg-warn'
+                  }`}
+                />
+                {hasEstimate
+                  ? '实时估值已开启'
+                  : latestNavDate
+                    ? `净值已更新 · ${latestNavDate}`
+                    : '盘中估值不可用'}
               </span>
               <button
                 onClick={toggle}
@@ -150,6 +173,7 @@ export function Layout() {
         </header>
 
         <main className="px-4 pb-24 pt-4 sm:px-6 lg:pb-10">
+          <ErrorBanner />
           <Outlet />
         </main>
       </div>

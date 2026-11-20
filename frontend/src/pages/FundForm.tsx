@@ -1,12 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Badge, Button } from '../components/ui'
-import { IconPlus, IconTrash } from '../components/icons'
-import { MOCK_FEES, MOCK_FUNDS, MOCK_NAV } from '../data/mock'
+import { IconPlus, IconSearch, IconTrash } from '../components/icons'
+import * as api from '../lib/api'
+import { useStore } from '../lib/store'
 import type { RedeemTier } from '../types'
 
 /**
  * 添加 / 编辑基金的费率配置表单。
  * 这是整个应用的核心输入：隐性成本核算完全依赖这里填写的费率。
+ *
+ * 费率支持一键从天天基金抓取（GET /api/funds/{code}/fee/auto），
+ * 保存后写入后端 JSON 账本（POST /api/funds 新增，PUT /api/funds/{code} 改费率）。
  */
 
 interface FormState {
@@ -46,42 +50,41 @@ export function FundFormModal({
   onClose: () => void
   editingCode?: string
 }) {
+  const { funds, refresh, source } = useStore()
   const [form, setForm] = useState<FormState>(emptyForm)
-  const [search, setSearch] = useState('')
+  const [fetching, setFetching] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+
+  // 只在打开弹窗时初始化表单，后台刷新 store 不应该清掉用户正在填的内容
+  const fundsRef = useRef(funds)
+  useEffect(() => {
+    fundsRef.current = funds
+  }, [funds])
 
   useEffect(() => {
     if (!open) return
+    setError(null)
+    setNotice(null)
     if (editingCode) {
-      const fund = MOCK_FUNDS.find((f) => f.code === editingCode)
-      const fee = MOCK_FEES[editingCode]
-      if (fund && fee) {
+      const rec = fundsRef.current.find((f) => f.fund.code === editingCode)
+      if (rec) {
         setForm({
-          code: fund.code,
-          name: fund.name,
-          category: fund.category,
-          company: fund.company,
-          subscribeRate: String(fee.subscribeRate),
-          dailyHoldRate: String(fee.dailyHoldRate),
-          minSubscribe: String(fee.minSubscribe),
-          redeemTiers: fee.redeemTiers.map((t) => ({ ...t })),
+          code: rec.fund.code,
+          name: rec.fund.name,
+          category: rec.fund.category,
+          company: rec.fund.company,
+          subscribeRate: String(rec.fee.subscribeRate),
+          dailyHoldRate: String(rec.fee.dailyHoldRate),
+          minSubscribe: String(rec.fee.minSubscribe),
+          redeemTiers: rec.fee.redeemTiers.map((t) => ({ ...t })),
         })
         return
       }
     }
     setForm(emptyForm())
-    setSearch('')
   }, [open, editingCode])
-
-  const results = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return []
-    return MOCK_FUNDS.filter(
-      (f) =>
-        f.code.includes(q) ||
-        f.name.toLowerCase().includes(q) ||
-        f.company.toLowerCase().includes(q),
-    ).slice(0, 6)
-  }, [search])
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setForm((f) => ({ ...f, [k]: v }))
@@ -100,10 +103,7 @@ export function FundFormModal({
       const start = (last?.maxDays ?? last?.minDays ?? 0) + 1
       return {
         ...f,
-        redeemTiers: [
-          ...f.redeemTiers,
-          { minDays: start, maxDays: null, rate: 0 },
-        ],
+        redeemTiers: [...f.redeemTiers, { minDays: start, maxDays: null, rate: 0 }],
       }
     })
 
@@ -112,6 +112,87 @@ export function FundFormModal({
       ...f,
       redeemTiers: f.redeemTiers.filter((_, idx) => idx !== i),
     }))
+
+  /** 从天天基金抓取费率档案与基金基本信息 */
+  async function autoFetch() {
+    const code = form.code.trim()
+    if (!/^\d{6}$/.test(code)) {
+      setError('请输入 6 位基金代码，例如 161725')
+      return
+    }
+    setFetching(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const res = await api.getAutoFee(code)
+      const f = res.fee
+      setForm((prev) => ({
+        ...prev,
+        code,
+        name: res.fund?.name ?? prev.name,
+        category: res.fund?.category ?? prev.category,
+        company: res.fund?.company ?? prev.company,
+        subscribeRate: String(f.subscribeRate),
+        dailyHoldRate: String(f.dailyHoldRate),
+        minSubscribe: String(f.minSubscribe),
+        redeemTiers: f.redeemTiers.map((t) => ({ ...t })),
+      }))
+      setNotice(
+        res.stale
+          ? `已从天天基金获取（缓存数据${res.warning ? '：' + res.warning : ''}）`
+          : '已从天天基金获取最新费率，可再手工微调',
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '费率获取失败')
+    } finally {
+      setFetching(false)
+    }
+  }
+
+  async function save() {
+    const code = form.code.trim()
+    if (!/^\d{6}$/.test(code)) {
+      setError('请输入 6 位基金代码，例如 161725')
+      return
+    }
+    if (!editingCode && !form.name.trim()) {
+      setError('请填写基金名称，或点「自动获取费率」自动填充')
+      return
+    }
+    setSaving(true)
+    setError(null)
+    const fee = {
+      subscribeRate: Number(form.subscribeRate) || 0,
+      dailyHoldRate: Number(form.dailyHoldRate) || 0,
+      redeemTiers: form.redeemTiers.map((t) => ({
+        minDays: Number(t.minDays) || 0,
+        maxDays: t.maxDays === null ? null : Number(t.maxDays),
+        rate: Number(t.rate) || 0,
+      })),
+      minSubscribe: Number(form.minSubscribe) || 0,
+    }
+    try {
+      if (editingCode) {
+        await api.updateFee(editingCode, fee)
+      } else {
+        await api.upsertFund(
+          {
+            code,
+            name: form.name.trim(),
+            category: form.category.trim(),
+            company: form.company.trim(),
+          },
+          fee,
+        )
+      }
+      await refresh()
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存失败')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   // 预估年化隐性成本（按 10 万元持有一年估算，帮助用户理解费率影响）
   const preview = useMemo(() => {
@@ -150,46 +231,63 @@ export function FundFormModal({
 
         {/* 内容 */}
         <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
-          {/* 基金选择 */}
+          {/* 基金代码 */}
           <section className="space-y-2.5">
-            <Label>基金代码 / 名称</Label>
+            <Label>基金代码</Label>
+            <div className="flex gap-2">
+              <input
+                value={form.code}
+                onChange={(e) => set('code', e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="161725"
+                inputMode="numeric"
+                disabled={!!editingCode}
+                className="num h-9 w-full rounded-lg border border-border bg-surface-2 px-3 text-[13px] outline-none placeholder:text-text-muted focus:border-accent disabled:opacity-60"
+              />
+              <Button
+                variant="default"
+                onClick={() => void autoFetch()}
+                disabled={fetching || source === 'mock'}
+                className="shrink-0"
+              >
+                <IconSearch width={14} height={14} />
+                {fetching ? '获取中…' : '自动获取费率'}
+              </Button>
+            </div>
+            {notice && (
+              <div className="rounded-lg border border-accent-border bg-accent-soft px-3 py-2 text-[12px] text-accent">
+                {notice}
+              </div>
+            )}
+            {error && (
+              <div className="rounded-lg border border-up/30 bg-up-soft px-3 py-2 text-[12px] text-up">
+                {error}
+              </div>
+            )}
+          </section>
+
+          {/* 基金信息 */}
+          <section className="space-y-2.5">
+            <Label>基金信息</Label>
             <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="输入代码或名称搜索，如 161725 / 白酒"
+              value={form.name}
+              onChange={(e) => set('name', e.target.value)}
+              placeholder="基金名称，如 招商中证白酒指数(LOF)A"
               className="h-9 w-full rounded-lg border border-border bg-surface-2 px-3 text-[13px] outline-none placeholder:text-text-muted focus:border-accent"
             />
-            {results.length > 0 && (
-              <div className="overflow-hidden rounded-lg border border-border">
-                {results.map((f) => (
-                  <button
-                    key={f.code}
-                    onClick={() => {
-                      set('code', f.code)
-                      set('name', f.name)
-                      set('category', f.category)
-                      set('company', f.company)
-                      setSearch('')
-                    }}
-                    className="flex w-full items-center justify-between border-b border-border px-3 py-2 text-left last:border-0 hover:bg-surface-2"
-                  >
-                    <span className="text-[13px] font-medium">{f.name}</span>
-                    <span className="num text-[11px] text-text-muted">
-                      {f.code} · {f.company}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-            {form.code && (
-              <div className="rounded-lg border border-accent-border bg-accent-soft px-3 py-2">
-                <div className="text-[13px] font-medium text-accent">{form.name}</div>
-                <div className="num mt-0.5 text-[11px] text-text-secondary">
-                  {form.code} · {form.category} · {form.company} · 最新净值{' '}
-                  {MOCK_NAV[form.code]?.nav.toFixed(4) ?? '—'}
-                </div>
-              </div>
-            )}
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                value={form.category}
+                onChange={(e) => set('category', e.target.value)}
+                placeholder="类型，如 指数型"
+                className="h-9 w-full rounded-lg border border-border bg-surface-2 px-3 text-[13px] outline-none placeholder:text-text-muted focus:border-accent"
+              />
+              <input
+                value={form.company}
+                onChange={(e) => set('company', e.target.value)}
+                placeholder="基金公司，如 招商基金"
+                className="h-9 w-full rounded-lg border border-border bg-surface-2 px-3 text-[13px] outline-none placeholder:text-text-muted focus:border-accent"
+              />
+            </div>
           </section>
 
           <div className="h-px bg-border" />
@@ -253,9 +351,7 @@ export function FundFormModal({
                   <input
                     type="number"
                     value={t.minDays}
-                    onChange={(e) =>
-                      setTier(i, { minDays: Number(e.target.value) })
-                    }
+                    onChange={(e) => setTier(i, { minDays: Number(e.target.value) })}
                     className="num h-8 w-full rounded-md border border-border bg-surface px-2 text-[13px] outline-none focus:border-accent"
                   />
                   <input
@@ -307,13 +403,17 @@ export function FundFormModal({
 
         {/* 底部操作 */}
         <div className="flex items-center justify-between gap-3 border-t border-border px-5 py-3.5">
-          <Badge tone="accent">本地保存 · 单用户</Badge>
+          <Badge tone="accent">保存到本地 JSON 账本</Badge>
           <div className="flex gap-2">
             <Button variant="ghost" onClick={onClose}>
               取消
             </Button>
-            <Button variant="primary" onClick={onClose} disabled={!form.code}>
-              保存
+            <Button
+              variant="primary"
+              onClick={() => void save()}
+              disabled={saving || source === 'mock'}
+            >
+              {saving ? '保存中…' : '保存'}
             </Button>
           </div>
         </div>
@@ -327,9 +427,7 @@ export function FundFormModal({
    ============================================================ */
 
 function Label({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="text-[13px] font-medium text-text">{children}</span>
-  )
+  return <span className="text-[13px] font-medium text-text">{children}</span>
 }
 
 function SectionTitle({ text }: { text: string }) {

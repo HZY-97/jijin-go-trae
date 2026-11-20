@@ -1,15 +1,48 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Badge, Button, Card, ChangeText, EmptyState } from '../components/ui'
-import { IconFilter, IconPlus, IconSwap } from '../components/icons'
+import { IconFilter, IconPlus, IconSwap, IconTrash } from '../components/icons'
 import { money, pct, relativeDay } from '../lib/format'
 import { useStore } from '../lib/store'
+import * as api from '../lib/api'
+import type { Trade } from '../types'
+import { TradeFormModal } from './TradeForm'
 
 type Filter = 'all' | 'buy' | 'sell' | 't'
 
 export function Transactions() {
-  const { trades, pairs, holdings } = useStore()
+  const { trades, pairs, holdings, refresh, source } = useStore()
   const [filter, setFilter] = useState<Filter>('all')
+  const [formOpen, setFormOpen] = useState(false)
+  const [editing, setEditing] = useState<Trade | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  function openCreate() {
+    setEditing(null)
+    setFormOpen(true)
+  }
+
+  function openEdit(t: Trade) {
+    setEditing(t)
+    setFormOpen(true)
+  }
+
+  async function remove(t: Trade) {
+    if (!window.confirm(`确定删除 ${t.date} 的这笔${t.side === 'buy' ? '买入' : '卖出'}流水？`)) {
+      return
+    }
+    setBusyId(t.id)
+    setError(null)
+    try {
+      await api.deleteTrade(t.id)
+      await refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除失败')
+    } finally {
+      setBusyId(null)
+    }
+  }
 
   const pairedTradeIds = useMemo(() => {
     const ids = new Set<string>()
@@ -52,11 +85,17 @@ export function Transactions() {
             共 {trades.length} 笔 · 当前筛选费用合计 {money(totalFee)}
           </p>
         </div>
-        <Button variant="primary">
+        <Button variant="primary" onClick={openCreate}>
           <IconPlus width={15} height={15} />
           记一笔
         </Button>
       </div>
+
+      {error && (
+        <div className="rounded-lg border border-up/30 bg-up-soft px-3 py-2 text-[12px] text-up">
+          {error}
+        </div>
+      )}
 
       {/* 筛选 */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1">
@@ -106,6 +145,7 @@ export function Transactions() {
                     <th className="px-3 py-2.5 text-right font-medium">费率</th>
                     <th className="px-3 py-2.5 text-right font-medium">费用</th>
                     <th className="px-5 py-2.5 text-left font-medium">备注</th>
+                    <th className="px-3 py-2.5 text-right font-medium">操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -154,6 +194,25 @@ export function Transactions() {
                         {money(t.fee)}
                       </td>
                       <td className="px-5 py-3 text-text-muted">{t.note ?? '—'}</td>
+                      <td className="px-3 py-3">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => openEdit(t)}
+                            disabled={source === 'mock' || busyId === t.id}
+                            className="rounded-md px-2 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:bg-surface-2 hover:text-text disabled:opacity-40"
+                          >
+                            编辑
+                          </button>
+                          <button
+                            onClick={() => void remove(t)}
+                            disabled={source === 'mock' || busyId === t.id}
+                            aria-label="删除流水"
+                            className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-up-soft hover:text-up disabled:opacity-40"
+                          >
+                            <IconTrash width={13} height={13} />
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -201,6 +260,23 @@ export function Transactions() {
                     {t.note}
                   </div>
                 )}
+                <div className="mt-2 flex items-center justify-end gap-2 border-t border-border pt-2">
+                  <button
+                    onClick={() => openEdit(t)}
+                    disabled={source === 'mock' || busyId === t.id}
+                    className="rounded-md px-2 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:bg-surface-2 hover:text-text disabled:opacity-40"
+                  >
+                    编辑
+                  </button>
+                  <button
+                    onClick={() => void remove(t)}
+                    disabled={source === 'mock' || busyId === t.id}
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-up-soft hover:text-up disabled:opacity-40"
+                    aria-label="删除流水"
+                  >
+                    <IconTrash width={13} height={13} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -258,6 +334,12 @@ export function Transactions() {
           </div>
         )}
       </Card>
+
+      <TradeFormModal
+        open={formOpen}
+        onClose={() => setFormOpen(false)}
+        editingTrade={editing}
+      />
     </div>
   )
 }

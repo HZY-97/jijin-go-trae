@@ -127,6 +127,8 @@ export interface Holding {
   tCount: number
   /** 该基金做 T 累计净收益 */
   tNetProfit: number
+  /** 已公布净值日涨跌幅 %（盘中估值不可得时，用它折算当日盈亏） */
+  dayChangePct?: number
 }
 
 /** 大盘指数 */
@@ -142,4 +144,89 @@ export interface IndexQuote {
 export interface MarketSnapshot {
   indices: IndexQuote[]
   updatedAt: string
+}
+
+/* ============================================================
+   后端接口返回结构
+   ============================================================ */
+
+/** 组合汇总 */
+export interface PortfolioSummary {
+  marketValue: number
+  costAmount: number
+  profit: number
+  profitRate: number
+  hiddenCost: number
+  subscribeFeePaid: number
+  redeemFeePaid: number
+  holdFeeAccrued: number
+  hiddenCostRate: number
+  dayProfit: number
+  dayProfitRate: number
+  tCount: number
+  tNetProfit: number
+  positionCount: number
+}
+
+/** 基金 + 费率档案 + 来源 */
+export interface FundRecord {
+  fund: Fund
+  fee: FeeProfile
+  /** manual = 手工填写；eastmoney = 自动抓取 */
+  feeSource: string
+  updatedAt: string
+}
+
+/** 净值曲线上的一个点 */
+export interface NavPoint {
+  date: string
+  nav: number
+  accNav: number
+  changePct: number
+}
+
+/** 聚合接口的元信息 */
+export interface ApiMeta {
+  generatedAt: string
+  /** live = 全部实时；stale = 用了缓存旧值；degraded = 有数据源不可用 */
+  source: 'live' | 'stale' | 'degraded'
+  warnings: string[]
+  fundStatus: {
+    code: string
+    navDate: string
+    fetchedAt: string
+    stale: boolean
+  }[]
+}
+
+/** GET /api/portfolio 的完整响应 */
+export interface PortfolioResponse {
+  asOf: string
+  holdings: Holding[]
+  trades: Trade[]
+  pairs: TPair[]
+  market: MarketSnapshot
+  summary: PortfolioSummary
+  costCurve: { date: string; value: number }[]
+  meta: ApiMeta
+}
+
+/** 应用设置 */
+export interface AppSettings {
+  pairMaxGapDays: number
+  autoRefresh: boolean
+  refreshSeconds: number
+  remindTier: boolean
+  remindPendingT: boolean
+}
+
+/** GET /api/health */
+export interface HealthInfo {
+  status: string
+  version: string
+  asOf: string
+  dataDir: string
+  cacheDir: string
+  funds: number
+  trades: number
 }

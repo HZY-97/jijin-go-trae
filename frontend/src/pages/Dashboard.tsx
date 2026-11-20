@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { Chart, axisStyle } from '../components/Chart'
 import { Badge, Card, ChangeText, StatTile } from '../components/ui'
 import { IconAlert, IconClock, IconSwap } from '../components/icons'
-import { mockCostCumulative, mockIndexSeries } from '../data/mock'
+import { mockIndexSeries } from '../data/mock'
 import { money, pct, shortDate } from '../lib/format'
 import { useStore } from '../lib/store'
 
@@ -55,7 +55,7 @@ export function Dashboard() {
   }, [])
 
   const costOption = useMemo(() => {
-    const series = mockCostCumulative(90)
+    const series = costCurve
     return (dark: 'light' | 'dark') => ({
       grid: { left: 48, right: 14, top: 16, bottom: 24 },
       tooltip: { trigger: 'axis' },
@@ -64,7 +64,10 @@ export function Dashboard() {
         data: series.map((s) => s.date.slice(5)),
         boundaryGap: false,
         ...axisStyle(dark),
-        axisLabel: { ...axisStyle(dark).axisLabel, interval: 29 },
+        axisLabel: {
+          ...axisStyle(dark).axisLabel,
+          interval: Math.max(1, Math.floor(series.length / 6)),
+        },
       },
       yAxis: {
         type: 'value',
@@ -82,7 +85,7 @@ export function Dashboard() {
         },
       ],
     })
-  }, [])
+  }, [costCurve])
 
   const allocationOption = useMemo(
     () => (dark: 'light' | 'dark') => ({
@@ -314,7 +317,7 @@ export function Dashboard() {
           </div>
           <div className="mt-4 border-t border-border pt-3">
             <div className="mb-1 flex items-center justify-between text-xs">
-              <span className="text-text-muted">隐性成本累计曲线（近 90 日）</span>
+              <span className="text-text-muted">隐性成本累计曲线</span>
               <span className="num font-medium text-text">
                 {money(costCurve[costCurve.length - 1]?.value ?? 0)}
               </span>
@@ -428,11 +431,11 @@ export function Dashboard() {
                     </td>
                     <td className="num px-3 py-2.5 text-right">
                       {h.nav.toFixed(4)}
-                      {h.estimateChange !== null && (
+                      {h.dayChangePct !== undefined && (
                         <div className="text-[11px]">
                           <ChangeText
-                            value={h.estimateChange}
-                            text={pct(h.estimateChange)}
+                            value={h.dayChangePct}
+                            text={pct(h.dayChangePct)}
                           />
                         </div>
                       )}

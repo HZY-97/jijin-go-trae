@@ -2,10 +2,13 @@ import type {
   FeeProfile,
   Fund,
   Holding,
+  PortfolioSummary,
   RedeemTier,
   TPair,
   Trade,
 } from '../types'
+
+export type { PortfolioSummary }
 
 /* ============================================================
    日期工具
@@ -298,23 +301,6 @@ export function deriveHolding(
 /* ============================================================
    组合汇总
    ============================================================ */
-
-export interface PortfolioSummary {
-  marketValue: number
-  costAmount: number
-  profit: number
-  profitRate: number
-  hiddenCost: number
-  subscribeFeePaid: number
-  redeemFeePaid: number
-  holdFeeAccrued: number
-  hiddenCostRate: number
-  dayProfit: number
-  dayProfitRate: number
-  tCount: number
-  tNetProfit: number
-  positionCount: number
-}
 
 export function summarize(holdings: Holding[]): PortfolioSummary {
   const marketValue = holdings.reduce((s, h) => s + h.marketValue, 0)
